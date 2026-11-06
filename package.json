@@ -1,14 +1,10 @@
 {
   "name": "bnh-tickets-servicio-tecnico",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "Sistema de tickets de servicio técnico de BNH Medical (Vercel + Google Sheets)",
+  "description": "Sistema de tickets de servicio técnico de BNH Medical (Vercel + puente de Apps Script + Google Sheets)",
   "engines": { "node": ">=18" },
   "scripts": {
     "test": "node test/prueba.js"
-  },
-  "dependencies": {
-    "google-auth-library": "^9.14.0",
-    "nodemailer": "^6.9.15"
   }
 }

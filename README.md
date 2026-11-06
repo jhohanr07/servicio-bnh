@@ -1,7 +1,13 @@
 # Sistema de tickets de servicio técnico – BNH Medical
 
-Versión para **Vercel** del sistema que antes vivía en Google Apps Script. Los datos siguen en tu Google Sheet
-(`Sistema_Tickets_Servicio_Tecnico`): Vercel lo lee y lo escribe con una cuenta de servicio de Google.
+Versión para **Vercel**. Los datos siguen en tu Google Sheet (`Sistema_Tickets_Servicio_Tecnico`).
+Como tu organización no permite crear claves de cuenta de servicio, Vercel **no usa ninguna clave de Google**:
+habla con un pequeño *puente* de Apps Script (`apps-script/Backend.gs`) pegado en el propio Sheet, que lee y
+escribe las hojas y envía los correos. Vercel solo conoce la dirección del puente y una clave secreta.
+
+```
+Navegador ──> Vercel (páginas + reglas del sistema) ──HTTPS + API_SECRET──> Apps Script (en tu Sheet) ──> Hojas y correo
+```
 
 | Dirección | Qué es |
 |---|---|
@@ -13,20 +19,27 @@ Versión para **Vercel** del sistema que antes vivía en Google Apps Script. Los
 ## Estructura
 
 ```
-public/        index.html, dashboard.html, tecnico.html  (las páginas)
+apps-script/   Backend.gs y appsscript.json  (se pegan en el Sheet, NO se despliegan en Vercel)
+public/        index.html, dashboard.html, tecnico.html
 api/rpc.js     las páginas llaman aquí
 api/cron-alertas.js   revisión automática de casos sin respuesta (Vercel Cron)
-lib/           core.js (reglas del sistema), sheets.js, mail.js, util.js
-test/prueba.js prueba con un libro simulado:  npm test
+lib/           core.js (reglas del sistema), puente.js, sheets.js, mail.js, util.js
+test/prueba.js prueba de extremo a extremo con un libro simulado:  npm test
 ```
 
-## 1. Cuenta de servicio de Google (una sola vez)
+## 1. Puente de Apps Script (una sola vez)
 
-1. En https://console.cloud.google.com crea un proyecto y activa **Google Sheets API**.
-2. IAM y administración > Cuentas de servicio > **Crear cuenta de servicio**. Luego, en la pestaña **Claves**, crea una clave **JSON** y descárgala.
-3. Abre tu Google Sheet > **Compartir** > agrega el correo de la cuenta de servicio (`...@...iam.gserviceaccount.com`) como **Editor**.
-4. Zona horaria del libro: Archivo > Configuración > **(GMT-04:00) Caracas**.
-5. El ID del libro es lo que está entre `/d/` y `/edit` en la URL del Sheet.
+1. Abre el Google Sheet > **Extensiones > Apps Script**.
+2. Crea el archivo `Backend.gs` (o reemplaza `Code.gs`) y pega el contenido de `apps-script/Backend.gs`.
+   Si el proyecto ya tenía el `Code.gs` anterior del sistema de tickets, bórralo: ya no se usa. Borra también los archivos HTML del proyecto.
+3. (Recomendado) **Configuración del proyecto** > marca "Mostrar el archivo de manifiesto appsscript.json" y pega `apps-script/appsscript.json` (zona horaria Caracas y permisos).
+4. **Configuración del proyecto > Propiedades del script > Agregar propiedad**: `API_SECRET` = un texto largo y aleatorio (guárdalo, lo usarás en Vercel).
+5. En el editor elige la función `probarPuente` > **Ejecutar** y acepta los permisos. En el registro debe decir "Hojas que faltan: ninguna" y "API_SECRET definida: sí".
+6. **Implementar > Nueva implementación > Aplicación web**: *Ejecutar como*: **Yo**; *Quién tiene acceso*: **Cualquier persona**. Copia la URL que termina en `/exec` (será `APPS_SCRIPT_URL`).
+   Abrirla en el navegador debe mostrar `{"ok":true,"mensaje":"Puente de tickets activo."}`.
+
+Los correos salen desde la cuenta que implementó el puente (los límites diarios de envío son los de esa cuenta).
+Cuando cambies `Backend.gs`, crea una **nueva versión** de la implementación.
 
 El libro debe tener las hojas `TICKETS`, `TECNICOS`, `ESTADOS`, `DATA CLIENTE` y `Sales` con los mismos encabezados de siempre.
 Si falta la columna **Última alerta** en TICKETS, el sistema la crea solo.
@@ -42,17 +55,14 @@ git remote add origin https://github.com/TU_USUARIO/NOMBRE_DEL_REPO.git
 git push -u origin main
 ```
 
-(Crea antes el repositorio vacío en github.com > New repository. El archivo `.env` está en `.gitignore`: las claves nunca se suben.)
+(Crea antes el repositorio vacío en github.com > New repository. `.env` está en `.gitignore`: las claves nunca se suben.)
 
 ## 3. Desplegar en Vercel
 
 1. vercel.com > **Add New > Project** > importa el repositorio. Framework: **Other**. No hace falta comando de build.
-2. En **Settings > Environment Variables** crea las variables de `.env.example`:
-   `SPREADSHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON` (pega todo el JSON), `CLAVE_PANEL`, `TOKEN_SECRET`, `CRON_SECRET`,
-   `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` y, si quieres, `CORREO_ADMIN`.
+2. En **Settings > Environment Variables** crea: `APPS_SCRIPT_URL`, `API_SECRET` (igual que en Apps Script),
+   `CLAVE_PANEL`, `TOKEN_SECRET`, `CRON_SECRET` y, si quieres, `CORREO_ADMIN`.
 3. **Deploy**. Después de cambiar variables, haz Redeploy.
-
-Correo: con Gmail usa una *contraseña de aplicación* (cuenta de Google con verificación en dos pasos) en `SMTP_PASS`.
 
 ## Alertas automáticas
 
@@ -61,9 +71,15 @@ fecha de atención con más de 72 h y repite cada 24 h. El plan gratuito de Verc
 con el plan Pro puedes cambiar `"0 12 * * *"` por `"*/15 * * * *"` (y poner `ALERTAS_CADA_MINUTOS=15`).
 El botón "Enviar alertas ahora" del dashboard sigue funcionando.
 
-## Diferencias respecto a Apps Script
+## Seguridad
 
-- Las fechas nuevas se guardan como **texto** `dd/MM/yyyy HH:mm`. Las fechas reales que ya tengas en la hoja se siguen leyendo bien.
-- La caché de clientes y equipos dura 30 minutos por instancia (no existe el menú "Actualizar datos").
-- No hay bloqueo entre envíos simultáneos: si dos clientes reportan en el mismo segundo podría repetirse un número de ticket (poco probable con este volumen).
-- Los enlaces "Abrir Ticket" enviados desde Apps Script dejarán de funcionar: el token ahora se firma con `TOKEN_SECRET`.
+- Quien conozca la URL del puente **y** `API_SECRET` puede leer y escribir el libro: no los compartas ni los subas a GitHub.
+- Si sospechas que se filtraron, cambia `API_SECRET` en Apps Script y en Vercel.
+- Si tu administrador de Google no permite aplicaciones web con acceso "Cualquier persona", pídele que lo habilite para este proyecto
+  o usa *Workload Identity Federation* con Vercel (alternativa sin claves; requiere que el administrador cree el proveedor de identidad).
+
+## Diferencias respecto al sistema anterior de Apps Script
+
+- Las alertas corren en Vercel Cron (ver arriba) y ya no hay menú "Servicio técnico" en el Sheet.
+- La caché de clientes y equipos dura 30 minutos por instancia.
+- Los enlaces "Abrir Ticket" de correos enviados con el sistema anterior dejan de funcionar: el token ahora se firma con `TOKEN_SECRET`.
